@@ -9,7 +9,7 @@ inline bool supported(){
  auto base=(unsigned char*)GetModuleHandleW(nullptr);
  auto dos=(IMAGE_DOS_HEADER*)base;if(dos->e_magic!=IMAGE_DOS_SIGNATURE)return false;
  auto nt=(IMAGE_NT_HEADERS64*)(base+dos->e_lfanew);
- return nt->Signature==IMAGE_NT_SIGNATURE&&nt->FileHeader.TimeDateStamp==0x5d93ab0d&&nt->OptionalHeader.SizeOfImage==0x5b7000;
+ return nt->Signature==IMAGE_NT_SIGNATURE&&nt->FileHeader.TimeDateStamp==0x5d93ab0d&&nt->OptionalHeader.SizeOfImage==0x58a000;
 }
 inline cube::Game* game(){return supported()?*(cube::Game**)((unsigned char*)GetModuleHandleW(nullptr)+0x551a80):nullptr;}
 inline bool cloud(cube::World* world,ID3D11Buffer* buffer){
@@ -45,3 +45,4 @@ inline bool resident(cube::World*w,const Chunk& info,ID3D11Buffer* buffer,cube::
 }
 inline int blockType(cube::Zone* zone,int x,int y,int z){if(x<0||x>=64||y<0||y>=64)return 0;const auto& field=zone->fields[x*64+y];int index=z-field.base_z;return index>=0&&size_t(index)<field.blocks.size()?int(field.blocks[index].type):0;}
 }
+

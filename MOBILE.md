@@ -1,0 +1,5 @@
+# TemporalAA mobile
+Derived from DieuDeGlace/TemporalAA, preserving source history. Targets the previously inspected GameNative Cube World executable (timestamp 0x5d93ab0d, image size 0x58a000). Only executable compatibility guard changed; temporal rendering algorithm and PC Enabled=1/HistoryPercent=65 retained.
+Prototype: additional full-resolution textures/pass consume GPU memory and time. No motion vectors; fast movement may trail. Updated MoonandShadow exports lighting completion. Palette completion is optional; existing mobile palette integration still needs device validation.
+Windows WARP tests are not Android/DXVK validation. Phone was disconnected during preparation; installation, HUD, camera/foliage motion, mod ordering and performance remain unverified. Back up existing Mods before installing TemporalAA.dll and config/TemporalAA.ini. F9 toggles TAA; remove DLL to uninstall.
+`nWARP test passed: history accumulation, rejection, resize and state restoration at 1280x720,1920x1080,512x512.
