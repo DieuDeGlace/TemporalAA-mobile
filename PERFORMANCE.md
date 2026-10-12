@@ -8,6 +8,24 @@ MoonandShadow writes `Mods/SteamShadows.log`: first is shadow-map generation; se
 
 These measure GPU execution of the named passes, not total frame time, CPU capture overhead, or FPS. Sparse timestamps still have a small instrumentation cost. Compare the same location, camera, resolution, and settings after loading has settled. Test both enabled, shadows only (F9 off), TAA only (F7 off), and both disabled. Preserve ReShade settings throughout.
 
-Projection uploads are reused when all 64 bytes are identical. World-draw classification and projection/viewport inspection are shared between capture and jitter instead of repeated. The fallback path remains for draws outside normal capture.
+Projection uploads are reused when all 64 bytes are identical. Draw classification and projection/viewport inspection are shared between capture and jitter instead of repeated. Native perspective backgrounds share world jitter without becoming the world-history capture source.
 
-`BlurPercent=12` blends a mild cross-neighborhood filter from samples already fetched by the resolve. `JitterPercent=75` reduces the eight-frame jitter amplitude without changing its sequence. No extra texture samples or fullscreen passes are added. GPU tests cover upload reuse, changed projection readback, equivalent preparation paths, blur, uniform colors, history rejection, resizing, and state restoration. Actual FPS improvement still requires a game comparison.
+`BlurPercent=12` blends a mild cross-neighborhood filter from samples already fetched by the resolve. `JitterPercent=75` reduces the eight-frame jitter amplitude without changing its sequence. Contrast-aware rejection on the edge-stability branch adds a small amount of arithmetic, reuses existing neighborhood bounds, and removes a duplicate center fetch. No extra texture samples, render targets or fullscreen passes are added.
+
+## Edge-stability comparison, 2026-10-12
+
+RX 6600, D3D11 hardware device, 1920 x 1080, HistoryPercent=65, BlurPercent=12 and JitterPercent=75. `TemporalStabilityTest --benchmark` measures the actual input copy, resolve and history copy on a controlled slanted-edge fixture. There are 24 warmup submissions and 80 timed samples per variant, with interleaved submission order. Scene uploads happen outside the timed intervals. Steam Cube World was running during this measurement.
+
+| Resolver | Median GPU ms | Mean GPU ms | 95th percentile GPU ms |
+| --- | ---: | ---: | ---: |
+| Accepted main baseline (2e0d10b) | 0.1847 | 0.1961 | 0.2988 |
+| Edge-stability candidate | 0.1884 | 0.1988 | 0.3025 |
+| Candidate minus baseline | +0.0037 | +0.0027 | +0.0037 |
+
+The difference is small in this run; it is not a guaranteed zero-cost change or a gameplay FPS comparison. The fixture excludes per-draw CPU hook overhead and native background rendering. The candidate keeps classification shared and projection uploads cached; live timing should confirm the complete game behavior.
+
+The static slanted-edge test measures per-pixel variance across eight jitter phases after history warms up. WARP variance fell from 67.8996 to 14.7805 (78.23% lower); hardware results were similar. This measures a synthetic edge, not a percentage reduction of every in-game shimmer. Moving silhouettes leave no stale trail outside the current neighborhood in the test, and uniform colors remain unchanged.
+
+After installing build 44b12e0, the user reported "Steadier, FPS similar" in the requested gameplay comparison. This confirms an initial visible improvement without a reported FPS regression. No exact FPS readings or matched gameplay timestamp measurements were supplied; the hardware fixture above remains the quantitative cost comparison. The tested DLL stays installed, and main remains unchanged.
+
+Current gameplay logs for the accepted MoonandShadow build averaged 1.3324 ms GPU across 44 reported groups, including both shadow maps and receiver application. Those observations do not isolate the incremental cost of its latest model-shading correction: a comparison at the same camera and location would be required. The correction adds no pass and skips depth lookups on grazing model faces.

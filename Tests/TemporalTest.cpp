@@ -1,5 +1,6 @@
 #include "../TemporalAA.cpp"
 #include <cassert>
+#include <string>
 #include <vector>
 int main() {
     ID3D11Device *d = nullptr;
@@ -8,6 +9,28 @@ int main() {
                                        D3D11_SDK_VERSION, &d, nullptr, &c)));
     taa::oldD = (taa::D)(*(void ***)c)[13];
     assert(taa::initialize(c));
+    // Enforce the existing texture-read budget in the compiled shader.
+    ID3DBlob *resolveCode = nullptr;
+    assert(
+        SUCCEEDED(D3DCompile(taa::code, strlen(taa::code), "ResolveBudget", nullptr, nullptr, "ps",
+                             "ps_4_0", D3DCOMPILE_OPTIMIZATION_LEVEL3, 0, &resolveCode, nullptr)));
+    ID3DBlob *listing = nullptr;
+    assert(SUCCEEDED(D3DDisassemble(resolveCode->GetBufferPointer(), resolveCode->GetBufferSize(),
+                                    0, nullptr, &listing)));
+    std::string assembly((char *)listing->GetBufferPointer(), listing->GetBufferSize());
+    auto instructionCount = [&](const char *instruction) {
+        unsigned count = 0;
+        size_t offset = 0;
+        while ((offset = assembly.find(instruction, offset)) != std::string::npos) {
+            ++count;
+            offset += strlen(instruction);
+        }
+        return count;
+    };
+    assert(instructionCount("\nsample_l") <= 9);
+    assert(instructionCount("\nld ") == 1);
+    taa::drop(listing);
+    taa::drop(resolveCode);
     taa::blurStrength = 0;
     taa::oldUpdate = (taa::Update)(*(void ***)c)[48];
     float projection[16]{};
@@ -65,6 +88,27 @@ int main() {
     assert(original == nativeBuffers[0]);
     assert(memcmp(fallbackProjection, taa::uploadedProjection, 64) == 0);
     taa::drop(original);
+    // The native textured/background shader has only the matrix triplet.
+    // It receives the same jitter without claiming a world history target.
+    ID3D11Buffer *backgroundBuffers[] = {nativeBuffers[0], nativeBuffers[1], nativeBuffers[2],
+                                         nullptr,          nullptr,          nullptr};
+    c->VSSetConstantBuffers(0, 6, backgroundBuffers);
+    taa::before(c);
+    assert(taa::preparedDraw.checked && taa::preparedDraw.valid && !taa::target);
+    original = taa::jitter(c);
+    assert(original == nativeBuffers[0]);
+    assert(memcmp(fallbackProjection, taa::uploadedProjection, 64) == 0);
+    taa::drop(original);
+    taa::finished = true;
+    assert(!taa::jitter(c));
+    taa::finished = false;
+    float hudProjection[16]{};
+    hudProjection[0] = hudProjection[5] = hudProjection[10] = hudProjection[15] = 1;
+    nativeBuffers[0]->SetPrivateData(taa::cacheGuid, 64, hudProjection);
+    taa::before(c);
+    assert(!taa::preparedDraw.valid && !taa::jitter(c));
+    nativeBuffers[0]->SetPrivateData(taa::cacheGuid, 64, cameraProjection);
+    puts("Background/world jitter alignment, HUD exclusion and compiled texture budget: PASS");
     taa::preparedDraw.valid = false;
     ID3D11Buffer *emptyBuffers[6]{};
     c->VSSetConstantBuffers(0, 6, emptyBuffers);

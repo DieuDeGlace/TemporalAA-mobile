@@ -9,7 +9,7 @@
 #include <cstdio>
 #include <cstring>
 #include <unordered_map>
-// Original world-only grading, made with AI assistance. No ReShade integration.
+// Native world temporal resolve, made with AI assistance. No ReShade integration.
 namespace taa {
 static GpuPassTimer gpuTimer;
 template <class T> void drop(T *&p) {
@@ -61,7 +61,7 @@ static bool enabled = true, internal = false, finished = false;
 static float historyWeight = .65f;
 static float blurStrength = .12f, jitterScale = .75f;
 struct PreparedDraw {
-    bool valid = false;
+    bool checked = false, valid = false;
     float projection[16]{};
     D3D11_VIEWPORT viewport{};
 };
@@ -108,18 +108,25 @@ static const char *code = R"(
 cbuffer Resolve:register(b0){float weight,valid,jitterX,jitterY;float blurStrength;float3 padding;};
 Texture2D<float4> scene:register(t0);Texture2D<float4> history:register(t1);SamplerState linearSampler:register(s0);
 float4 vs(uint id:SV_VertexID):SV_POSITION{float2 p=float2((id<<1)&2,id&2);return float4(p*float2(2,-2)+float2(-1,1),0,1);}
+float maxChannel(float3 value){return max(value.r,max(value.g,value.b));}
 float4 ps(float4 p:SV_POSITION):SV_TARGET{
  uint w,h;scene.GetDimensions(w,h);float2 uv=(p.xy+float2(jitterX,jitterY))/float2(w,h);
  float4 current=scene.SampleLevel(linearSampler,uv,0);float3 lo=current.rgb,hi=current.rgb;float3 left=current.rgb,right=current.rgb,up=current.rgb,down=current.rgb;
  [unroll]for(int y=-1;y<=1;y++)[unroll]for(int x=-1;x<=1;x++){
+  // The center is already fetched above; reuse it instead of sampling twice.
+  if(x==0&&y==0)continue;
   float3 c=scene.SampleLevel(linearSampler,uv+float2(x,y)/float2(w,h),0).rgb;lo=min(lo,c);hi=max(hi,c);if(y==0&&x==-1)left=c;if(y==0&&x==1)right=c;if(x==0&&y==-1)up=c;if(x==0&&y==1)down=c;
  }
  float3 old=history.Load(int3(p.xy,0)).rgb;
- float disagreement=max(abs(old.r-current.r),max(abs(old.g-current.g),abs(old.b-current.b)));
+ float disagreement=maxChannel(abs(old-current.rgb));
  // Opposing neighbors distinguish a thin peak/trough from a broad silhouette.
  float3 lr=(left-current.rgb)*(right-current.rgb),ud=(up-current.rgb)*(down-current.rgb);
  float thin=saturate(24*sqrt(max(0,max(max(lr.r,lr.g),max(lr.b,max(max(ud.r,ud.g),ud.b))))));
- float confidence=1-smoothstep(.035,lerp(.16,.30,thin),disagreement);
+ // Jitter changes edge coverage within the local contrast range. Preserve
+ // bounded history on those silhouettes, but still reject large raw changes.
+ // Flat newly revealed areas retain the original rejection threshold.
+ float rejection=max(lerp(.16,.30,thin),.60*maxChannel(hi-lo));
+ float confidence=1-smoothstep(.035,rejection,disagreement);
  float accumulation=lerp(weight,max(weight,.78),thin);
  // History is bounded to this frame's neighborhood and rejected on changes.
  float3 filtered=lerp(current.rgb,(current.rgb*4+left+right+up+down)/8,blurStrength);
@@ -289,7 +296,29 @@ static bool apply() {
     finished = true;
     return true;
 }
+// Both native vertex shaders use the same projection/view/world matrix slots.
+// The textured/background shader has only that triplet; the solid world shader
+// also supplies material/point-light/directional-light buffers. Prepare once,
+// then share the result with jitter rather than repeating descriptor queries.
+static bool perspectiveLayout(ID3D11DeviceContext *c, bool &world) {
+    ID3D11Buffer *buffers[6]{};
+    c->VSGetConstantBuffers(0, 6, buffers);
+    const UINT sizes[] = {64, 64, 64, 16, 320, 48};
+    bool matrices = true;
+    world = true;
+    for (int i = 0; i < 6; ++i) {
+        D3D11_BUFFER_DESC description{};
+        if (buffers[i])
+            buffers[i]->GetDesc(&description);
+        if (i < 3)
+            matrices &= description.ByteWidth == 64;
+        world &= description.ByteWidth == sizes[i];
+        drop(buffers[i]);
+    }
+    return matrices;
+}
 static void before(ID3D11DeviceContext *c) {
+    preparedDraw.checked = true;
     preparedDraw.valid = false;
     if (!enabled || internal || finished)
         return;
@@ -324,19 +353,8 @@ static void before(ID3D11DeviceContext *c) {
         }
         return;
     }
-    ID3D11Buffer *worldBuffers[6]{};
-    c->VSGetConstantBuffers(0, 6, worldBuffers);
-    bool native = true;
-    const UINT sizes[] = {64, 64, 64, 16, 320, 48};
-    for (int i = 0; i < 6; i++) {
-        D3D11_BUFFER_DESC d{};
-        if (worldBuffers[i])
-            worldBuffers[i]->GetDesc(&d);
-        if (d.ByteWidth != sizes[i])
-            native = false;
-        drop(worldBuffers[i]);
-    }
-    if (!native)
+    bool world = false;
+    if (!perspectiveLayout(c, world))
         return;
     UINT n = 1;
     D3D11_VIEWPORT vp{};
@@ -346,33 +364,42 @@ static void before(ID3D11DeviceContext *c) {
     preparedDraw.valid = true;
     memcpy(preparedDraw.projection, projection, 64);
     preparedDraw.viewport = vp;
+    if (!world)
+        return; // Jitter backgrounds, but capture history only from the world.
     if (!target) {
         ID3D11Buffer *viewBuffer = nullptr;
         c->VSGetConstantBuffers(1, 1, &viewBuffer);
         float camera[16]{};
         bool known = readBuffer(viewBuffer, camera, 64);
         drop(viewBuffer);
-        if (known) {
-            if (cameraKnown) {
-                bool cut = false;
-                for (int i = 0; i < 12; i++)
-                    cut |= fabsf(camera[i] - previousView[i]) > ((i % 4 == 3) ? 8.f : .35f);
-                cut |= fabsf(projection[0] - previousProjection[0]) > .01f ||
-                       fabsf(projection[5] - previousProjection[5]) > .01f;
-                if (cut)
-                    historyValid = false;
-            }
-            memcpy(previousView, camera, 64);
-            memcpy(previousProjection, projection, 64);
-            cameraKnown = true;
+        // A rotation-only sky camera may retain the solid shader's bound
+        // lighting buffers. It still needs jitter, but must not capture the
+        // world history target or replace its camera-change tracking.
+        if (!known || fabsf(camera[3]) + fabsf(camera[7]) + fabsf(camera[11]) < .01f)
+            return;
+        if (cameraKnown) {
+            bool cut = false;
+            for (int i = 0; i < 12; i++)
+                cut |= fabsf(camera[i] - previousView[i]) > ((i % 4 == 3) ? 8.f : .35f);
+            cut |= fabsf(projection[0] - previousProjection[0]) > .01f ||
+                   fabsf(projection[5] - previousProjection[5]) > .01f;
+            if (cut)
+                historyValid = false;
         }
+        memcpy(previousView, camera, 64);
+        memcpy(previousProjection, projection, 64);
+        cameraKnown = true;
         context = c;
         viewport = vp;
-        c->OMGetRenderTargets(1, &target, nullptr);
+        ID3D11DepthStencilView *sceneDepth = nullptr;
+        c->OMGetRenderTargets(1, &target, &sceneDepth);
+        if (!sceneDepth)
+            drop(target);
+        drop(sceneDepth);
     }
 }
 static ID3D11Buffer *jitter(ID3D11DeviceContext *c) {
-    if (internal || !enabled)
+    if (internal || !enabled || finished || (preparedDraw.checked && !preparedDraw.valid))
         return nullptr;
     ID3D11Buffer *b = nullptr;
     c->VSGetConstantBuffers(0, 1, &b);
@@ -390,17 +417,8 @@ static ID3D11Buffer *jitter(ID3D11DeviceContext *c) {
             drop(b);
             return nullptr;
         }
-        ID3D11Buffer *buffers[6]{};
-        c->VSGetConstantBuffers(0, 6, buffers);
-        const UINT sizes[] = {64, 64, 64, 16, 320, 48};
-        bool native = true;
-        for (int i = 0; i < 6; i++) {
-            D3D11_BUFFER_DESC d{};
-            if (buffers[i])
-                buffers[i]->GetDesc(&d);
-            native &= d.ByteWidth == sizes[i];
-            drop(buffers[i]);
-        }
+        bool world = false;
+        bool native = perspectiveLayout(c, world);
         UINT count = 1;
         c->RSGetViewports(&count, &vp);
         if (!native || !count || vp.Width < 320 || vp.Height < 180 || vp.TopLeftX || vp.TopLeftY ||
