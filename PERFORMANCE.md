@@ -29,3 +29,11 @@ The static slanted-edge test measures per-pixel variance across eight jitter pha
 After installing build 44b12e0, the user reported "Steadier, FPS similar" in the requested gameplay comparison. This confirms an initial visible improvement without a reported FPS regression. No exact FPS readings or matched gameplay timestamp measurements were supplied; the hardware fixture above remains the quantitative cost comparison. The tested DLL stays installed, and main remains unchanged.
 
 Current gameplay logs for the accepted MoonandShadow build averaged 1.3324 ms GPU across 44 reported groups, including both shadow maps and receiver application. Those observations do not isolate the incremental cost of its latest model-shading correction: a comparison at the same camera and location would be required. The correction adds no pass and skips depth lookups on grazing model faces.
+
+## Edge shimmer fix, 2026-10-13
+
+The edge-stability resolve still rejected history whenever it differed from the current pixel by more than a contrast-scaled threshold. On a strong edge, the jitter alone changes the pixel by up to the full edge contrast each frame, so those edges dropped history and showed raw jittered coverage.
+
+History is now rejected only by how far the neighborhood clamp had to move it. History inside the current 3x3 range is a valid jittered average, and history outside it is a real change. Edges and thin details accumulate up to `EdgeHistoryPercent` (default 90). Flat areas keep `HistoryPercent`. Current and history are blended with luminance weights (Karis), so bright samples do not dominate across jitter phases. No textures, passes or samples are added.
+
+WARP static slanted-edge phase variance: 14.7805 (edge-stability) to 0.7492 (94.9% lower), and 67.8996 for the original main shader. The moving-silhouette (no stale trail beyond the neighborhood) and uniform-color checks pass unchanged. These are synthetic measurements; in-game appearance needs live confirmation.

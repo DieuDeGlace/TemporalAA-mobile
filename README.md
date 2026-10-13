@@ -2,7 +2,7 @@
 
 Native Steam Cube World temporal anti-aliasing, made by DieuDeGlace with AI assistance (OpenAI ChatGPT/Codex). MIT licensed; SDK attribution in THIRD_PARTY_NOTICES.md. Targets CubeModLoader API 7.3 and inspected Steam build timestamp 0x5d93ab0d/image size 0x5b7000. ReShade is untouched.
 
-The supplied Omega videos guide the softer voxel-edge appearance, but do not establish Omega's implementation. This is a prototype, not an exact recreation. Eight-frame Halton subpixel projection jitter, linear reconstruction, neighborhood-clamped color history and change-based rejection resolve the world before the HUD. History resets on resolution changes, missed scene boundaries, large camera jumps, zoom changes and toggling. F9 toggles. Mods/TemporalAA.ini defaults to Enabled=1, HistoryPercent=65, BlurPercent=12 and JitterPercent=75.
+The supplied Omega videos guide the softer voxel-edge appearance, but do not establish Omega's implementation. This is a prototype, not an exact recreation. Eight-frame Halton subpixel projection jitter, linear reconstruction, neighborhood-clamped color history and change-based rejection resolve the world before the HUD. History resets on resolution changes, missed scene boundaries, large camera jumps, zoom changes and toggling. F9 toggles. Mods/TemporalAA.ini defaults to Enabled=1, HistoryPercent=65, EdgeHistoryPercent=90, BlurPercent=12 and JitterPercent=75.
 
 ## Edge-stability test branch
 
