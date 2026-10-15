@@ -1,4 +1,4 @@
-#include "../TemporalAA.cpp"
+﻿#include "../TemporalAA.cpp"
 #include <array>
 #include <cassert>
 #include <chrono>
@@ -84,6 +84,10 @@ struct ImageFixture {
         return boundary + slope * y;
     }
     void edge(float boundary, float slope, float jitterX, float jitterY) {
+        edge(boundary, slope, jitterX, jitterY, dark, bright);
+    }
+    void edge(float boundary, float slope, float jitterX, float jitterY, const unsigned char *dark,
+              const unsigned char *bright) {
         for (UINT y = 0; y < height; ++y)
             for (UINT x = 0; x < width; ++x) {
                 unsigned covered = 0;
@@ -171,6 +175,73 @@ double staticEdgeVariance(ImageFixture &fixture, ID3D11PixelShader *shader) {
         }
     assert(count > 200);
     return total / count;
+}
+
+// Distance (0-255 units) from a color to the segment between two colors.
+static double segmentDistance(const double *color, const unsigned char *a, const unsigned char *b) {
+    double axis[3], rel[3], length = 0, t = 0;
+    for (int c = 0; c < 3; ++c) {
+        axis[c] = double(b[c]) - a[c];
+        rel[c] = color[c] - a[c];
+        length += axis[c] * axis[c];
+    }
+    for (int c = 0; c < 3; ++c)
+        t += rel[c] * axis[c] / length;
+    t = std::clamp(t, 0.0, 1.0);
+    double distance = 0;
+    for (int c = 0; c < 3; ++c)
+        distance += (rel[c] - t * axis[c]) * (rel[c] - t * axis[c]);
+    return sqrt(distance);
+}
+
+// Worst off-hue output while a grass/stone edge pans across a static
+// horizon with sky below: pixels near the horizon see three colors at once.
+// A correct resolve only blends the colors meeting at that pixel's edge.
+// Per-channel history clamping to a three-color box can leave off-hue
+// fringes (green/red/yellow/blue lines). Pixels near the moving triple
+// junction are excluded, since a genuine three-way blend is valid there.
+double panningEdgeHueError(ImageFixture &fixture, ID3D11PixelShader *shader) {
+    static constexpr unsigned char grass[3] = {72, 168, 40}, stone[3] = {150, 146, 172},
+                                   sky[3] = {70, 120, 230};
+    constexpr float horizon = 48.3f, slope = .23f;
+    taa::historyValid = false;
+    double worst = 0;
+    for (unsigned frame = 0; frame < 48; ++frame) {
+        auto jitter = phase(frame);
+        float boundary = 40.f + 2.3f * frame;
+        fixture.edge(boundary, slope, jitter.first, jitter.second, grass, stone);
+        // Overwrite rows below the horizon with sky, with jittered coverage.
+        auto &pixels = fixture.pixels;
+        for (UINT y = 0; y < fixture.height; ++y)
+            for (UINT x = 0; x < fixture.width; ++x) {
+                unsigned covered = 0;
+                for (const auto &sample : ImageFixture::coverageSamples)
+                    covered += y + sample[1] - jitter.second >= horizon;
+                size_t offset = (size_t(y) * fixture.width + x) * 4;
+                for (unsigned c = 0; c < 3; ++c)
+                    pixels[offset + c] = static_cast<unsigned char>(
+                        (pixels[offset + c] * (4 - covered) + sky[c] * covered + 2) / 4);
+            }
+        fixture.upload();
+        fixture.resolve(shader, jitter.first, jitter.second);
+        if (frame < 8)
+            continue;
+        auto output = fixture.read();
+        for (UINT y = 4; y + 4 < fixture.height; ++y)
+            for (UINT x = 4; x + 4 < fixture.width; ++x) {
+                float edgeX = ImageFixture::edgeAt(float(y) + .5f, boundary, slope);
+                if (fabsf(float(x) + .5f - edgeX) < 4 && fabsf(float(y) + .5f - horizon) < 4)
+                    continue;
+                size_t offset = (size_t(y) * fixture.width + x) * 4;
+                double color[3] = {double(output[offset]), double(output[offset + 1]),
+                                   double(output[offset + 2])};
+                double best = std::min({segmentDistance(color, grass, stone),
+                                        segmentDistance(color, grass, sky),
+                                        segmentDistance(color, stone, sky)});
+                worst = std::max(worst, best);
+            }
+    }
+    return worst;
 }
 
 void motionAndUniformChecks(ImageFixture &fixture, ID3D11PixelShader *shader) {
@@ -323,6 +394,13 @@ int main(int argc, char **argv) {
                stableVariance, candidateVariance, 100 * (candidateVariance / stableVariance - 1));
         assert(stableVariance > .1);
         assert(candidateVariance < stableVariance * .995);
+        double stableHue = panningEdgeHueError(fixture, baseline);
+        double candidateHue = panningEdgeHueError(fixture, candidate);
+        printf("Panning three-color edge, worst off-hue distance: stable %.2f, candidate %.2f\n",
+               stableHue, candidateHue);
+        fflush(stdout);
+        // A few units come from 8-bit rounding and bilinear reconstruction.
+        assert(candidateHue <= std::max(stableHue, 6.0));
         motionAndUniformChecks(fixture, candidate);
     }
     if (hardware)

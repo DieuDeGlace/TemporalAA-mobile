@@ -2,17 +2,23 @@
 
 Native Steam Cube World temporal anti-aliasing, made by DieuDeGlace with AI assistance (OpenAI ChatGPT/Codex). MIT licensed; SDK attribution in THIRD_PARTY_NOTICES.md. Targets CubeModLoader API 7.3 and inspected Steam build timestamp 0x5d93ab0d/image size 0x5b7000. ReShade is untouched.
 
-The supplied Omega videos guide the softer voxel-edge appearance, but do not establish Omega's implementation. This is a prototype, not an exact recreation. Eight-frame Halton subpixel projection jitter, linear reconstruction, neighborhood-clamped color history and change-based rejection resolve the world before the HUD. History resets on resolution changes, missed scene boundaries, large camera jumps, zoom changes and toggling. F9 toggles. Mods/TemporalAA.ini defaults to Enabled=1, HistoryPercent=65, BlurPercent=12 and JitterPercent=75.
+The supplied Omega videos guide the softer voxel-edge appearance, but do not establish Omega's implementation. This is a prototype, not an exact recreation. Eight-frame Halton subpixel projection jitter, linear reconstruction, neighborhood-clamped color history and change-based rejection resolve the world before the HUD. History resets on resolution changes, missed scene boundaries, large camera jumps, zoom changes and toggling. F9 toggles. Mods/TemporalAA.ini defaults to Enabled=1, HistoryPercent=65, EdgeHistoryPercent=90, BlurPercent=12 and JitterPercent=75.
 
-## Edge-stability test branch
+## Camera reprojection
 
-`test/taa-edge-stability` starts from the accepted main build and preserves its pass count, texture dimensions, settings and projection-upload reuse. Local contrast now guides history rejection at broad edges, reducing jitter-phase coverage changes while retaining raw color-change rejection and neighborhood clamping. The already fetched center sample is reused. Native perspective backgrounds receive the same projection jitter as the world; orthographic HUD draws stay excluded. World history capture still requires the solid world layout, a translated camera and a depth-backed target.
+History is fetched where each surface was on the previous frame, not at the same screen pixel. The resolve reads the native scene depth and maps every pixel through the current and previous jittered camera (previous view-projection times the inverse of the current one, built in double precision on the CPU). Without this, any camera movement blended in whatever used to be at that pixel, which showed as doubled or striped edges, smeared characters and shimmering distant faces.
 
-The compiled resolver uses at most nine scene samples and one history load. WARP tests compare an independent main shader baseline against the candidate over all eight jitter phases, check moving-edge trails and uniform colors, and cover projection alignment, history rejection, target resizing, state restoration and binding release at 720p, 1080p and 512 x 512. See PERFORMANCE.md for hardware timings. Tests do not establish Omega parity or gameplay frame rate; camera motion, clouds, foliage, HUD and minimap still need live confirmation.
+- Silhouettes use the nearest depth of a small cross, so edge pixels follow the foreground surface instead of smearing it over the background.
+- History is released when the previous frame's depth shows a different surface there (newly uncovered terrain, objects passing in front). Sky and far-plane pixels still reproject, which corrects camera rotation.
+- History is sampled with a five-tap Catmull-Rom filter, so camera motion does not soften the image a little more every frame.
+- The neighborhood clip, edge accumulation and Karis weighting are unchanged from the accepted shimmer fix.
+- MSAA scene targets now resolve into history; the previous CopyResource across sample counts was invalid and would have left history stale. Multisampled depth uses the nearest sample.
 
-There is currently no depth reprojection or per-object motion-vector buffer on this branch. Fast camera/character/foliage motion may lose temporal smoothing or retain some trails. Color rejection limits this but cannot replace motion vectors. Projection jitter applies to the identified native perspective matrix layouts; other custom rendering pipelines may not share it.
+Characters, fish and waving foliage still have no per-object motion vectors; their own movement relies on the neighborhood clip and change rejection. `CameraReprojection=0` in `Mods/TemporalAA.ini` restores same-pixel history. The log reports whether reprojection is active, or why not.
 
-One full-size input copy or MSAA resolve, one output-to-history copy and one fullscreen resolve pass are added. GPU memory/work increase with resolution. There is no CPU GPU readback in the render path. World grading and MoonandShadow coordinate through optional completion exports; update alpha-lookalike alongside this mod. No ReShade files, proprietary shaders, game assets or saves are bundled.
+Cost: two full-size depth textures and one depth copy per frame, plus five depth loads and four extra history taps in the existing resolve pass. No extra fullscreen pass and no CPU readback.
+
+The native depth convention was checked in the executable: depth test enabled with LESS_EQUAL (standard depth, near 0, far 1).
 
 ## Build
 

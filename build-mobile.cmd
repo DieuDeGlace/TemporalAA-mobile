@@ -12,3 +12,11 @@ clang-cl /nologo /O2 /MD /std:c++17 /UNDEBUG /Ivendor\cwmods Tests\TemporalStabi
 if errorlevel 1 exit /b 1
 build-mobile\TemporalStabilityTest.exe
 if errorlevel 1 exit /b 1
+clang-cl /nologo /O2 /MD /std:c++17 /UNDEBUG /Ivendor\cwmods Tests\ReprojectionTest.cpp /Fobuild-mobile\ReprojectionTest.obj /Febuild-mobile\ReprojectionTest.exe /link d3d11.lib dxgi.lib d3dcompiler.lib user32.lib winmm.lib
+if errorlevel 1 exit /b 1
+build-mobile\ReprojectionTest.exe
+if errorlevel 1 exit /b 1
+clang-cl /nologo /O2 /MD /std:c++17 /UNDEBUG /Ivendor\cwmods Tests\ReadableDepthTest.cpp /Fobuild-mobile\ReadableDepthTest.obj /Febuild-mobile\ReadableDepthTest.exe /link d3d11.lib dxgi.lib d3dcompiler.lib user32.lib winmm.lib
+if errorlevel 1 exit /b 1
+build-mobile\ReadableDepthTest.exe
+if errorlevel 1 exit /b 1

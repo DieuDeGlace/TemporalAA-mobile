@@ -27,8 +27,10 @@ int main() {
         }
         return count;
     };
-    assert(instructionCount("\nsample_l") <= 9);
-    assert(instructionCount("\nld ") == 1);
+    // Nine neighborhood samples plus five Catmull-Rom history taps; one
+    // same-pixel history load, five depth loads and one previous-depth load.
+    assert(instructionCount("\nsample_l") <= 14);
+    assert(instructionCount("\nld ") <= 7);
     taa::drop(listing);
     taa::drop(resolveCode);
     taa::blurStrength = 0;

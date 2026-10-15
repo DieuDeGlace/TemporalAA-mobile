@@ -28,3 +28,15 @@ Built Windows x64 DLLs with clang-cl /O2. All nine shadow tests passed, includin
 Installed into the actual GameNative Steam folder with a rollback installer; three DLLs byte-compared successfully. Pixel 10 Pro / Android 17 / GameNative 1.2.1 loaded into Groron Hills; HUD and terrain rendered. Logs confirm model receiver/cascades active and TAA resolves. User reported: "Looks steadier; speed feels similar." No matched gameplay FPS benchmark or long-session test was performed. Wine's shader compiler reports a potential-uninitialized warning for modelPlaneVisibility; all return paths are defined, compilation completes, and rendering tests/device initialization succeed. This warning is retained in diagnostics rather than suppressed.
 
 Rollback: close GameNative and restore all three backed-up DLLs together. Keep the existing INIs. The normal Steam-folder launcher was restored after the one-time installer. Geo/.NET, saves, Steam auth, driver/DXVK/Proton and other installed mods were not replaced.
+
+## Camera reprojection and MSAA depth update (2026-10-15)
+
+Merged upstream TemporalAA `perf/taa-msaa-copies`. This includes camera reprojection: since 2026-10-14 the phone already ran that PC build through the parity installer. It also adds:
+
+- shader-readable scene depth, so the multisampled depth buffer is read in place instead of copied every frame;
+- double-buffered history in place of the per-frame MSAA history resolve;
+- swapped depth-history textures.
+
+`MobileBuild.h` and the phone-only identity check are kept, and `NativeScene.h` keeps the mobile version.
+
+On the PC RX 6600 benchmark, at 1080p with 4x/8x MSAA, the pass went from 1.20/2.02 ms to 0.36/0.53 ms. The image is unchanged. DXVK on the phone has not been measured. `ReadableDepth=0` in `TemporalAA.ini` restores the copy path.
