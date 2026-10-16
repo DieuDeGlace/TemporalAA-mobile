@@ -77,12 +77,12 @@ static void log(const char *s) {
 }
 // 64 if `r` is a 64-byte constant buffer (a single matrix), otherwise 0.
 static UINT bytes(ID3D11Resource *r) {
-    ID3D11Buffer *b = nullptr;
-    if (FAILED(r->QueryInterface(__uuidof(ID3D11Buffer), (void **)&b)))
+    D3D11_RESOURCE_DIMENSION dimension{};
+    r->GetType(&dimension);
+    if (dimension != D3D11_RESOURCE_DIMENSION_BUFFER)
         return 0;
     D3D11_BUFFER_DESC d{};
-    b->GetDesc(&d);
-    b->Release();
+    static_cast<ID3D11Buffer *>(r)->GetDesc(&d);
     return (d.BindFlags & D3D11_BIND_CONSTANT_BUFFER) && d.ByteWidth == 64 ? 64 : 0;
 }
 // Reads the shadow copy of a constant buffer's contents.
@@ -565,16 +565,18 @@ static bool sceneViewport(UINT count, const D3D11_VIEWPORT &vp) {
     return !(!count || vp.Width < 320 || vp.Height < 180 || vp.TopLeftX || vp.TopLeftY);
 }
 
-// Lets the other Steam mods finish their world passes before the resolve.
+// Lets the other Steam mods finish their world passes before the resolve. All
+// mods are loaded before the game renders, so the exports are looked up once.
 static void finishOtherMods() {
-    auto module = GetModuleHandleW(L"MoonandShadow.dll");
-    auto finish =
-        module ? (void(WINAPI *)())GetProcAddress(module, "FinishWorldLighting") : nullptr;
+    using Finish = void(WINAPI *)();
+    auto find = [](const wchar_t *dll, const char *name) {
+        auto module = GetModuleHandleW(dll);
+        return module ? (Finish)GetProcAddress(module, name) : nullptr;
+    };
+    static Finish finish = find(L"MoonandShadow.dll", "FinishWorldLighting"),
+                  grade = find(L"alpha-lookalike.dll", "FinishAlphaLookalike");
     if (finish)
         finish();
-    auto gradeModule = GetModuleHandleW(L"alpha-lookalike.dll");
-    auto grade = gradeModule ? (void(WINAPI *)())GetProcAddress(gradeModule, "FinishAlphaLookalike")
-                             : nullptr;
     if (grade)
         grade();
 }
@@ -757,7 +759,7 @@ static HRESULT STDMETHODCALLTYPE map(ID3D11DeviceContext *c, ID3D11Resource *r, 
     return hr;
 }
 static void STDMETHODCALLTYPE unmap(ID3D11DeviceContext *c, ID3D11Resource *r, UINT sub) {
-    auto it = mapped.find(r);
+    auto it = mapped.empty() ? mapped.end() : mapped.find(r);
     if (it != mapped.end()) {
         r->SetPrivateData(cacheGuid, it->second.size, it->second.data);
         mapped.erase(it);
