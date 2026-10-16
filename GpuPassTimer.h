@@ -3,6 +3,11 @@
 #include <cstdio>
 
 // Sparse asynchronous GPU timings. Never flush or wait for a result.
+//
+// Measures two consecutive GPU passes: call begin() before the first pass,
+// split() between them and end() after the second. Only every 60th frame is
+// timed, results are read back whenever the GPU has them (up to four queries in
+// flight), and the average of every 10 samples is appended to the log file.
 class GpuPassTimer {
     struct Slot {
         ID3D11Query *disjoint = nullptr;
@@ -10,39 +15,13 @@ class GpuPassTimer {
         bool pending = false;
     };
     Slot slots[4]{};
-    Slot *active = nullptr;
+    Slot *active = nullptr; // Slot being recorded this frame, if any.
     unsigned frame = 0, samples = 0;
-    double firstMs = 0, secondMs = 0;
+    double firstMs = 0, secondMs = 0; // Sums for the current batch of samples.
     bool attempted = false, ready = false;
 
-  public:
-    ~GpuPassTimer() {
-        for (auto &slot : slots) {
-            if (slot.disjoint)
-                slot.disjoint->Release();
-            for (auto *stamp : slot.stamp)
-                if (stamp)
-                    stamp->Release();
-        }
-    }
-    void begin(ID3D11Device *device, ID3D11DeviceContext *context, const char *path,
-               const char *label) {
-        active = nullptr;
-        if (!attempted) {
-            attempted = true;
-            ready = true;
-            for (auto &slot : slots) {
-                D3D11_QUERY_DESC desc{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
-                if (FAILED(device->CreateQuery(&desc, &slot.disjoint)))
-                    ready = false;
-                desc.Query = D3D11_QUERY_TIMESTAMP;
-                for (auto &stamp : slot.stamp)
-                    if (FAILED(device->CreateQuery(&desc, &stamp)))
-                        ready = false;
-            }
-        }
-        if (!ready)
-            return;
+    // Reads back every finished query without blocking and logs batch averages.
+    void collect(ID3D11DeviceContext *context, const char *path, const char *label) {
         for (auto &slot : slots) {
             if (!slot.pending)
                 continue;
@@ -79,6 +58,39 @@ class GpuPassTimer {
                 firstMs = secondMs = 0;
             }
         }
+    }
+
+  public:
+    ~GpuPassTimer() {
+        for (auto &slot : slots) {
+            if (slot.disjoint)
+                slot.disjoint->Release();
+            for (auto *stamp : slot.stamp)
+                if (stamp)
+                    stamp->Release();
+        }
+    }
+    // Creates the queries on first use, collects finished results and, on every
+    // 60th frame, starts timing.
+    void begin(ID3D11Device *device, ID3D11DeviceContext *context, const char *path,
+               const char *label) {
+        active = nullptr;
+        if (!attempted) {
+            attempted = true;
+            ready = true;
+            for (auto &slot : slots) {
+                D3D11_QUERY_DESC desc{D3D11_QUERY_TIMESTAMP_DISJOINT, 0};
+                if (FAILED(device->CreateQuery(&desc, &slot.disjoint)))
+                    ready = false;
+                desc.Query = D3D11_QUERY_TIMESTAMP;
+                for (auto &stamp : slot.stamp)
+                    if (FAILED(device->CreateQuery(&desc, &stamp)))
+                        ready = false;
+            }
+        }
+        if (!ready)
+            return;
+        collect(context, path, label);
         if (frame++ % 60 != 0)
             return;
         for (auto &slot : slots) {

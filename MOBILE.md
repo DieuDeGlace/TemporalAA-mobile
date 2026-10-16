@@ -28,3 +28,8 @@ Built Windows x64 DLLs with clang-cl /O2. All nine shadow tests passed, includin
 Installed into the actual GameNative Steam folder with a rollback installer; three DLLs byte-compared successfully. Pixel 10 Pro / Android 17 / GameNative 1.2.1 loaded into Groron Hills; HUD and terrain rendered. Logs confirm model receiver/cascades active and TAA resolves. User reported: "Looks steadier; speed feels similar." No matched gameplay FPS benchmark or long-session test was performed. Wine's shader compiler reports a potential-uninitialized warning for modelPlaneVisibility; all return paths are defined, compilation completes, and rendering tests/device initialization succeed. This warning is retained in diagnostics rather than suppressed.
 
 Rollback: close GameNative and restore all three backed-up DLLs together. Keep the existing INIs. The normal Steam-folder launcher was restored after the one-time installer. Geo/.NET, saves, Steam auth, driver/DXVK/Proton and other installed mods were not replaced.
+
+
+## Rendering performance sync — 2026-10-15
+
+Applied directly to mobile main from desktop `2bc2f58a436ef28adac4d5db36b2071c88faf258`. Ports the MSAA-readable depth/copy reduction, camera reprojection and draw-hook CPU cleanup. The resolve and jitter settings are unchanged from the current desktop test build. The mobile executable identity guard, cached validation and mobile configuration presets are retained. Builds remain Windows x64 DLLs for GameNative, not Android shared libraries. Desktop CPU/GPU fixture results are not phone performance measurements. Preserve existing phone INIs when installing. PC regression checks and phone deployment verification are recorded with the release artifacts; gameplay performance/visual confirmation remains required.

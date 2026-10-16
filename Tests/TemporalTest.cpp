@@ -27,8 +27,10 @@ int main() {
         }
         return count;
     };
-    assert(instructionCount("\nsample_l") <= 9);
-    assert(instructionCount("\nld ") == 1);
+    // Nine neighborhood samples plus five Catmull-Rom history taps; one
+    // same-pixel history load, five depth loads and one previous-depth load.
+    assert(instructionCount("\nsample_l") <= 14);
+    assert(instructionCount("\nld ") <= 7);
     taa::drop(listing);
     taa::drop(resolveCode);
     taa::blurStrength = 0;
@@ -73,6 +75,18 @@ int main() {
     taa::jitterX = .25f;
     taa::jitterY = -.25f;
     c->VSSetConstantBuffers(0, 6, nativeBuffers);
+    bool solidLayout = false;
+    assert(taa::perspectiveLayout(c, solidLayout) && solidLayout);
+    auto inspections = taa::bufferLayout.inspections;
+    for (unsigned i = 0; i < 1000; ++i)
+        assert(taa::perspectiveLayout(c, solidLayout) && solidLayout);
+    assert(taa::bufferLayout.inspections == inspections);
+    ID3D11Buffer *invalidLayout[6] = {nativeBuffers[0], nativeBuffers[4], nativeBuffers[2],
+                                      nativeBuffers[3], nativeBuffers[4], nativeBuffers[5]};
+    c->VSSetConstantBuffers(0, 6, invalidLayout);
+    assert(!taa::perspectiveLayout(c, solidLayout) && !solidLayout);
+    c->VSSetConstantBuffers(0, 6, nativeBuffers);
+    assert(taa::perspectiveLayout(c, solidLayout) && solidLayout);
     taa::preparedDraw.valid = false;
     auto original = taa::jitter(c);
     assert(original == nativeBuffers[0]);
@@ -95,7 +109,9 @@ int main() {
     c->VSSetConstantBuffers(0, 6, backgroundBuffers);
     taa::before(c);
     assert(taa::preparedDraw.checked && taa::preparedDraw.valid && !taa::target);
+    assert(taa::preparedDraw.original == nativeBuffers[0]);
     original = taa::jitter(c);
+    assert(!taa::preparedDraw.original);
     assert(original == nativeBuffers[0]);
     assert(memcmp(fallbackProjection, taa::uploadedProjection, 64) == 0);
     taa::drop(original);
@@ -110,6 +126,7 @@ int main() {
     nativeBuffers[0]->SetPrivateData(taa::cacheGuid, 64, cameraProjection);
     puts("Background/world jitter alignment, HUD exclusion and compiled texture budget: PASS");
     taa::preparedDraw.valid = false;
+    taa::bufferLayout.clear();
     ID3D11Buffer *emptyBuffers[6]{};
     c->VSSetConstantBuffers(0, 6, emptyBuffers);
     for (auto &buffer : nativeBuffers)
